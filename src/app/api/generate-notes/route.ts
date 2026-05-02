@@ -12,6 +12,7 @@ type GeneratedNotes = {
 };
 
 const VISUAL_SUBJECTS = new Set(["biology", "geography"]);
+const MERMAID_STARTERS = ["graph", "flowchart", "sequenceDiagram", "stateDiagram", "erDiagram", "gantt"];
 
 function extractJsonObject(input: string): string {
   const cleaned = input.replace(/```json\n?|```\n?/g, "").trim();
@@ -53,6 +54,15 @@ function normalizeNotes(raw: unknown, subject: string, chapter: string): Generat
 
   const visualAllowed = VISUAL_SUBJECTS.has(subject.toLowerCase());
   const shouldGenerateImage = visualAllowed && data.shouldGenerateImage === true;
+  let diagram = typeof data.diagram === "string" ? data.diagram.trim() : "";
+  diagram = diagram.replace(/```mermaid\n?|```\n?/gi, "").trim();
+
+  const hasValidMermaidStart = MERMAID_STARTERS.some((starter) => diagram.startsWith(starter));
+  if (!hasValidMermaidStart) {
+    const safeNodes = normalizedSections.slice(0, 3).map((s, idx) => `N${idx + 1}["${s.heading.replace(/"/g, "")}"]`);
+    const safeEdges = normalizedSections.slice(0, 3).map((_, idx) => `A --> N${idx + 1}`);
+    diagram = [`graph TD`, `A["${chapter.replace(/"/g, "")}"]`, ...safeNodes, ...safeEdges].join("\n");
+  }
 
   return {
     title: typeof data.title === "string" && data.title.trim() ? data.title.trim() : `${chapter} Notes`,
@@ -62,7 +72,7 @@ function normalizeNotes(raw: unknown, subject: string, chapter: string): Generat
         : `Quick revision notes for ${chapter} in ${subject}.`,
     shouldGenerateImage,
     imagePrompt: shouldGenerateImage && typeof data.imagePrompt === "string" ? data.imagePrompt.trim() : "",
-    diagram: typeof data.diagram === "string" ? data.diagram.trim() : "",
+    diagram,
     sections: normalizedSections,
     keyConcepts: normalizedKeyConcepts,
   };

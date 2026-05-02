@@ -31,6 +31,21 @@ type QuizData = {
   error?: string;
 };
 
+const MERMAID_STARTERS = ["graph", "flowchart", "sequenceDiagram", "stateDiagram", "erDiagram", "gantt"];
+
+function sanitizeMermaid(raw: string | undefined): string {
+  if (!raw) return "";
+  return raw.replace(/```mermaid\n?|```\n?/gi, "").trim();
+}
+
+function getFirstMermaidLine(diagram: string): string {
+  const lines = diagram
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith("%%"));
+  return lines[0] ?? "";
+}
+
 export default function ChapterActionClient({ exam, subject, chapter }: Props) {
   const [loading, setLoading] = useState<"quiz" | "notes" | "evaluating" | null>(null);
   const [quizData, setQuizData] = useState<QuizData | null>(null);
@@ -92,7 +107,11 @@ export default function ChapterActionClient({ exam, subject, chapter }: Props) {
     let cancelled = false;
 
     async function renderDiagram() {
-      if (!notesData?.diagram) {
+      const cleanedDiagram = sanitizeMermaid(notesData?.diagram);
+      const firstLine = getFirstMermaidLine(cleanedDiagram).toLowerCase();
+      const startsValid = MERMAID_STARTERS.some((starter) => firstLine.startsWith(starter.toLowerCase()));
+
+      if (!cleanedDiagram || !startsValid) {
         setShowDiagram(false);
         setDiagramSvg(null);
         return;
@@ -100,9 +119,10 @@ export default function ChapterActionClient({ exam, subject, chapter }: Props) {
 
       try {
         const mermaid = (await import("mermaid")).default;
-        mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "loose" });
+        mermaid.initialize({ startOnLoad: false, theme: "default", securityLevel: "strict", suppressErrorRendering: true });
+        await mermaid.parse(cleanedDiagram);
         const id = `notes-diagram-${Date.now()}`;
-        const { svg } = await mermaid.render(id, notesData.diagram);
+        const { svg } = await mermaid.render(id, cleanedDiagram);
         if (!cancelled) {
           setDiagramSvg(svg);
           setShowDiagram(true);
