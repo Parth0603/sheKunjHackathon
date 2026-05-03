@@ -1,7 +1,5 @@
 import mongoose, { Document, Schema } from "mongoose";
 
-type Difficulty = "easy" | "medium" | "hard";
-
 export interface IQuizAnalysis extends Document {
   userId: string;
   attemptKey: string;
@@ -14,15 +12,13 @@ export interface IQuizAnalysis extends Document {
   accuracy: number;
   timeTaken: number;
   analysis: {
-    summary: string;
+    level: "Weak" | "Moderate" | "Strong";
+    coreIssue: string;
+    weakAreas: string[];
     strengths: string[];
-    weaknesses: string[];
-    mistakePatterns: string[];
-    timeAnalysis: string;
-    difficultyBreakdown: Record<Difficulty, string>;
-    actionablePlan: string[];
-    nextQuizStrategy: string;
-    confidenceScore: number;
+    mistakePattern: string;
+    timeInsight: string;
+    actionPlan: string[];
   };
   createdAt: Date;
   updatedAt: Date;
@@ -41,19 +37,13 @@ const QuizAnalysisSchema = new Schema<IQuizAnalysis>(
     accuracy: { type: Number, required: true },
     timeTaken: { type: Number, required: true },
     analysis: {
-      summary: { type: String, default: "" },
+      level: { type: String, enum: ["Weak", "Moderate", "Strong"], default: "Moderate" },
+      coreIssue: { type: String, default: "Mixed" },
+      weakAreas: { type: [String], default: [] },
       strengths: { type: [String], default: [] },
-      weaknesses: { type: [String], default: [] },
-      mistakePatterns: { type: [String], default: [] },
-      timeAnalysis: { type: String, default: "" },
-      difficultyBreakdown: {
-        easy: { type: String, default: "" },
-        medium: { type: String, default: "" },
-        hard: { type: String, default: "" },
-      },
-      actionablePlan: { type: [String], default: [] },
-      nextQuizStrategy: { type: String, default: "" },
-      confidenceScore: { type: Number, default: 50 },
+      mistakePattern: { type: String, default: "" },
+      timeInsight: { type: String, default: "" },
+      actionPlan: { type: [String], default: [] },
     },
   },
   { timestamps: true }
@@ -61,4 +51,3 @@ const QuizAnalysisSchema = new Schema<IQuizAnalysis>(
 
 export default mongoose.models.QuizAnalysis ||
   mongoose.model<IQuizAnalysis>("QuizAnalysis", QuizAnalysisSchema);
-
