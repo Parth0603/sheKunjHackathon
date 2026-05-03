@@ -24,6 +24,8 @@ interface Props {
 export default function ChapterListClient({ exam, subject, initialChapters, performances }: Props) {
   const [chapters, setChapters] = useState<Chapter[]>(initialChapters);
   const [loading, setLoading] = useState(false);
+  const examPath = encodeURIComponent(exam);
+  const subjectPath = encodeURIComponent(subject);
 
   async function handleGenerateChapters() {
     setLoading(true);
@@ -67,7 +69,7 @@ export default function ChapterListClient({ exam, subject, initialChapters, perf
               Your accuracy is currently {weakPerformance?.accuracy.toFixed(0)}%. Reviewing this module is critical for improvement.
             </p>
           </div>
-          <Link href={`/learn/${exam}/${subject}/${recommendedChapter.id}`} className="btn btn-primary" style={{ flexShrink: 0, textDecoration: "none" }}>
+          <Link href={`/learn/${examPath}/${subjectPath}/${encodeURIComponent(recommendedChapter.id)}`} className="btn btn-primary" style={{ flexShrink: 0, textDecoration: "none" }}>
             Start Priority Module
           </Link>
         </div>
@@ -102,7 +104,7 @@ export default function ChapterListClient({ exam, subject, initialChapters, perf
             const statusLabel = !perf ? "Untested" : accuracy > 75 ? "Mastered" : accuracy >= 50 ? "Moderate" : "Needs Review";
 
             return (
-              <Link href={`/learn/${exam}/${subject}/${chapter.id}`} key={chapter.id} style={{ textDecoration: "none" }}>
+              <Link href={`/learn/${examPath}/${subjectPath}/${encodeURIComponent(chapter.id)}`} key={chapter.id} style={{ textDecoration: "none" }}>
                 <div className="card hover-bg-high" style={{ padding: 20, height: "100%", display: "flex", flexDirection: "column" }}>
                   <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 16 }}>
                     <h2 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 16, fontWeight: 600, color: "var(--on-surface)", lineHeight: 1.3 }}>

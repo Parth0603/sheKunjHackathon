@@ -3,11 +3,19 @@ import { mockExams } from "@/data/mockData";
 import { notFound } from "next/navigation";
 import ChapterActionClient from "./ChapterActionClient";
 
+function slugify(input: string): string {
+  return input.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
 export default async function ChapterActionPage({ params }: { params: Promise<{ exam: string; subject: string; chapter: string }> }) {
   const { exam, subject, chapter } = await params;
-  const examData = mockExams.find((e) => e.id === exam);
-  const subjectData = examData?.subjects.find((s) => s.id === subject);
-  const chapterData = subjectData?.chapters.find((c) => c.id === chapter);
+  const examSlug = slugify(decodeURIComponent(exam));
+  const subjectSlug = slugify(decodeURIComponent(subject));
+  const chapterSlug = slugify(decodeURIComponent(chapter));
+
+  const examData = mockExams.find((e) => slugify(e.id) === examSlug || slugify(e.name) === examSlug);
+  const subjectData = examData?.subjects.find((s) => slugify(s.id) === subjectSlug || slugify(s.name) === subjectSlug);
+  const chapterData = subjectData?.chapters.find((c) => slugify(c.id) === chapterSlug || slugify(c.name) === chapterSlug);
   if (!examData || !subjectData || !chapterData) notFound();
 
   return (

@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { connectDB } from "@/lib/mongodb";
 import UserPerformance from "@/models/UserPerformance";
+import MockExamResult from "@/models/MockExamResult";
 import { getExamAnalysis } from "@/lib/analysis";
 
 function SparkBar({ values }: { values: number[] }) {
@@ -22,32 +23,93 @@ function SparkBar({ values }: { values: number[] }) {
   );
 }
 
-export default async function AnalyticsPage() {
+export default async function AnalyticsPage({ searchParams }: { searchParams: Promise<{ exam?: string }> }) {
+  const { exam: examFilterRaw } = await searchParams;
   const session = await getServerSession(authOptions);
   if (!session?.user?.email) redirect("/");
 
   await connectDB();
-  const performances = await UserPerformance.find({ userId: session.user.email }).sort({ lastAttempt: -1 });
+  const performances = await UserPerformance.find({
+    userId: session.user.email,
+    type: "quiz",
+  }).sort({ lastAttempt: -1 });
+  const mockResults = await MockExamResult.find({ userId: session.user.email }).sort({ createdAt: -1 }).lean();
   const examAnalysis = await getExamAnalysis(session.user.email);
+  const examFilter = examFilterRaw ? decodeURIComponent(examFilterRaw) : "All";
+  const filteredMock = examFilter === "All" ? mockResults : mockResults.filter((r) => r.exam === examFilter);
 
   const overallAccuracy = performances.length
     ? performances.reduce((s, p) => s + p.accuracy, 0) / performances.length : 0;
-  const totalQuizzes = performances.length;
+  // Sum attempts (not chapter-document count) and guard duplicate chapter rows.
+  const chapterAttemptMap: Record<string, number> = {};
+  for (const p of performances) {
+    const key = `${p.exam}::${p.subject}::${p.chapter}`;
+    chapterAttemptMap[key] = (chapterAttemptMap[key] ?? 0) + (typeof p.attempts === "number" ? p.attempts : 0);
+  }
+  const totalQuizzes = Object.values(chapterAttemptMap).reduce((s, v) => s + v, 0);
   const improving = performances.filter((p) => p.trend === "Improving").length;
 
-  const bySubject = performances.reduce((acc: Record<string, { acc: number; count: number; exam: string }>, p) => {
+  const bySubject = performances.reduce((acc: Record<string, { acc: number; count: number; attempts: number; exam: string }>, p) => {
     const key = `${p.exam}::${p.subject}`;
-    if (!acc[key]) acc[key] = { acc: 0, count: 0, exam: p.exam };
+    if (!acc[key]) acc[key] = { acc: 0, count: 0, attempts: 0, exam: p.exam };
     acc[key].acc += p.accuracy;
     acc[key].count += 1;
+    acc[key].attempts += typeof p.attempts === "number" ? p.attempts : 0;
     return acc;
   }, {});
 
   const subjectRows = Object.entries(bySubject).map(([key, v]) => {
     const [exam, subject] = key.split("::");
     const avg = v.acc / v.count;
-    return { exam, subject, avg, count: v.count };
+    return { exam, subject, avg, count: v.attempts };
   }).sort((a, b) => a.avg - b.avg);
+
+  const avgMockScore = filteredMock.length
+    ? filteredMock.reduce((s, r) => s + (r.totalMarks ? (r.score / r.totalMarks) * 100 : 0), 0) / filteredMock.length
+    : 0;
+  const bestMockScore = filteredMock.length
+    ? Math.max(...filteredMock.map((r) => (r.totalMarks ? (r.score / r.totalMarks) * 100 : 0)))
+    : 0;
+  const last5Mock = [...filteredMock]
+    .slice(0, 5)
+    .reverse()
+    .map((r) => (r.totalMarks ? (r.score / r.totalMarks) * 100 : 0));
+  const mockTrend =
+    last5Mock.length >= 2
+      ? last5Mock[last5Mock.length - 1] > last5Mock[0] + 4
+        ? "Improving"
+        : last5Mock[last5Mock.length - 1] < last5Mock[0] - 4
+        ? "Declining"
+        : "Stable"
+      : "Stable";
+  const topicBucket: Record<string, { correct: number; attempted: number }> = {};
+  for (const attempt of filteredMock) {
+    for (const t of attempt.topics || []) {
+      if (!topicBucket[t.topic]) topicBucket[t.topic] = { correct: 0, attempted: 0 };
+      topicBucket[t.topic].correct += t.correct;
+      topicBucket[t.topic].attempted += t.attempted;
+    }
+  }
+  const topicStats = Object.entries(topicBucket)
+    .map(([topic, s]) => ({ topic, accuracy: s.attempted ? (s.correct / s.attempted) * 100 : 0, correct: s.correct, attempted: s.attempted }))
+    .sort((a, b) => a.accuracy - b.accuracy);
+  const weakTopics = topicStats.filter((t) => t.attempted > 0 && t.accuracy < 50).slice(0, 4);
+  const strongTopics = [...topicStats].filter((t) => t.accuracy > 75).reverse().slice(0, 4);
+  const totalWrong = filteredMock.reduce((s, r) => s + r.wrongAnswers, 0);
+  const totalNegative = filteredMock.reduce((s, r) => s + r.wrongAnswers * (r.exam === "JEE Advanced" || r.exam === "NEET" ? 1 : 0.67), 0);
+  const mockInsights: string[] = [];
+  if (totalWrong > 0 && totalNegative > 0.25 * Math.max(filteredMock.length, 1)) {
+    mockInsights.push("You are consistently losing marks in negative marking.");
+  }
+  if (mockTrend === "Declining") {
+    mockInsights.push(`Your ${examFilter === "All" ? "overall mock" : examFilter} performance trend is declining.`);
+  }
+  if (weakTopics[0]) {
+    mockInsights.push(`Your performance in ${weakTopics[0].topic} needs attention.`);
+  }
+  if (strongTopics[0]) {
+    mockInsights.push(`Strong in ${strongTopics[0].topic}.`);
+  }
 
   return (
     <div style={{ padding: "28px 32px", maxWidth: 1380, margin: "0 auto" }}>
@@ -214,6 +276,90 @@ export default async function AnalyticsPage() {
         ))}
         {performances.length === 0 && (
           <p style={{ fontSize: 13, color: "var(--on-surface-variant)", textAlign: "center", padding: "24px 0" }}>No quiz attempts yet.</p>
+        )}
+      </div>
+
+      {/* Mock Exam Analytics */}
+      <div className="card" style={{ padding: 24, marginTop: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <h3 style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 16, fontWeight: 600, color: "var(--on-surface)" }}>
+            Mock Exam Analytics
+          </h3>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {["All", "JEE Advanced", "GATE", "NEET", "UPSC"].map((e) => (
+              <Link key={e} href={e === "All" ? "/analytics" : `/analytics?exam=${encodeURIComponent(e)}`} className={`badge ${examFilter === e ? "badge-primary" : "badge-surface"}`} style={{ textDecoration: "none" }}>
+                {e}
+              </Link>
+            ))}
+          </div>
+        </div>
+
+        {filteredMock.length === 0 ? (
+          <p style={{ fontSize: 13, color: "var(--on-surface-variant)" }}>No mock exam attempts yet for this filter.</p>
+        ) : (
+          <>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 14 }}>
+              {[
+                { label: "Average Score", value: `${avgMockScore.toFixed(1)}%`, color: "var(--primary)" },
+                { label: "Best Score", value: `${bestMockScore.toFixed(1)}%`, color: "var(--success)" },
+                { label: "Total Attempts", value: String(filteredMock.length), color: "var(--accent-cyan)" },
+              ].map((m) => (
+                <div key={m.label} className="card" style={{ padding: 14 }}>
+                  <div style={{ fontSize: 11, color: "var(--on-surface-variant)" }}>{m.label}</div>
+                  <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: 24, fontWeight: 700, color: m.color }}>{m.value}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <div className="text-label-caps" style={{ color: "var(--on-surface-variant)", marginBottom: 8 }}>Last 5 Scores · {mockTrend}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8 }}>
+                {(last5Mock.length ? last5Mock : [0]).map((v, i) => (
+                  <div key={i} style={{ padding: 10, borderRadius: 8, background: "var(--surface-container-high)" }}>
+                    <div style={{ height: 50, display: "flex", alignItems: "flex-end" }}>
+                      <div style={{ width: "100%", borderRadius: 4, height: `${Math.max(8, v)}%`, background: "linear-gradient(180deg,var(--primary),var(--accent-cyan))" }} />
+                    </div>
+                    <div style={{ fontSize: 10, color: "var(--on-surface-variant)", marginTop: 4 }}>{v.toFixed(0)}%</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+              <div className="card" style={{ padding: 12 }}>
+                <div className="text-label-caps" style={{ color: "var(--error)", marginBottom: 8 }}>Weak Topics</div>
+                {weakTopics.length > 0 ? weakTopics.map((t) => (
+                  <div key={t.topic} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 5 }}>
+                    <span>{t.topic}</span><span>{t.accuracy.toFixed(0)}%</span>
+                  </div>
+                )) : <span style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>No weak topics detected.</span>}
+              </div>
+              <div className="card" style={{ padding: 12 }}>
+                <div className="text-label-caps" style={{ color: "var(--success)", marginBottom: 8 }}>Strong Topics</div>
+                {strongTopics.length > 0 ? strongTopics.map((t) => (
+                  <div key={t.topic} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 5 }}>
+                    <span>{t.topic}</span><span>{t.accuracy.toFixed(0)}%</span>
+                  </div>
+                )) : <span style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>No strong topics yet.</span>}
+              </div>
+            </div>
+
+            <div className="card" style={{ padding: 12, marginBottom: 12 }}>
+              <div className="text-label-caps" style={{ color: "var(--accent-cyan)", marginBottom: 8 }}>Performance Breakdown</div>
+              <div style={{ display: "flex", gap: 14, fontSize: 12 }}>
+                <span>Correct: {filteredMock.reduce((s, r) => s + r.correctAnswers, 0)}</span>
+                <span>Wrong: {filteredMock.reduce((s, r) => s + r.wrongAnswers, 0)}</span>
+                <span>Negative Impact: -{totalNegative.toFixed(2)}</span>
+              </div>
+            </div>
+
+            <div className="card" style={{ padding: 12 }}>
+              <div className="text-label-caps" style={{ color: "var(--secondary)", marginBottom: 8 }}>Insights</div>
+              {mockInsights.length > 0 ? mockInsights.map((i, idx) => (
+                <div key={idx} style={{ fontSize: 12, marginBottom: 6 }}>• {i}</div>
+              )) : <div style={{ fontSize: 12, color: "var(--on-surface-variant)" }}>No strong signal yet. Keep attempting mocks.</div>}
+            </div>
+          </>
         )}
       </div>
     </div>

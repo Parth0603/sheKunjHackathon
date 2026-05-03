@@ -12,6 +12,7 @@ const navItems = [
   { href: "/notes",       icon: "edit_note",              label: "Notes" },
   { href: "/ai-tutor",    icon: "psychology",             label: "AI Tutor" },
   { href: "/mock-exam",   icon: "assignment_turned_in",   label: "Mock Exams" },
+  { href: "/flashcards",  icon: "style",                  label: "Flashcards" },
   { href: "/analytics",   icon: "insights",               label: "Analytics" },
   { href: "/leaderboard", icon: "leaderboard",            label: "Leaderboard" },
   { href: "/rewards",     icon: "military_tech",          label: "Rewards" },
@@ -23,6 +24,7 @@ export default function Sidebar() {
 
   // Don't show sidebar on landing/auth pages
   if (!session && pathname === "/") return null;
+  if (pathname?.startsWith("/diagram/")) return null;
 
   return (
     <aside className="app-sidebar" id="app-sidebar">
